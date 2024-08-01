@@ -1,7 +1,7 @@
 import comfy
 import torch
 import torchdiffeq
-from tqdm.auto import trange, tqdm
+from tqdm.auto import tqdm
 
 ADAPTIVE_SOLVERS = { "dopri8", "dopri5", "bosh3", "fehlberg2", "adaptive_heun" }
 FIXED_SOLVERS = { "euler", "midpoint", "rk4", "heun3", "explicit_adams", "implicit_adams" }
@@ -39,13 +39,11 @@ class ODEFunction:
         if t <= 1e-5:
             return torch.zeros_like(y)
 
-        denoised = self.model(y.unsqueeze(0), t.unsqueeze(0), **self.extra_args)
-        return (y - denoised.squeeze(0)) / t
+        denoised = self.model(y, t.unsqueeze(0), **self.extra_args)
+        return (y - denoised) / t
 
     def _callback(self, t0, y0, step):
         if self.callback is not None:
-            y0 = y0.unsqueeze(0)
-
             self.callback({
                 "x": y0,
                 "i": step,
@@ -101,23 +99,21 @@ class ODESampler:
 
         ode = ODEFunction(model, t_min, t_max, n_steps, is_adaptive=is_adaptive, callback=callback, extra_args=extra_args)
 
-        samples = torch.empty_like(x)
-        for i in trange(x.shape[0], desc=self.solver, disable=disable):
-            ode.reset()
-
-            samples[i] = torchdiffeq.odeint(
-                ode,
-                x[i],
-                t,
-                rtol=self.rtol,
-                atol=self.atol,
-                method=self.solver,
-                options={
-                    "min_step": 1e-5,
-                    "max_num_steps": self.max_steps,
-                    "dtype": torch.float32 if torch.backends.mps.is_available() else torch.float64
-                }
-            )[-1]
+        # Process all samples in a batch
+        ode.reset()
+        samples = torchdiffeq.odeint(
+            ode,
+            x,
+            t,
+            rtol=self.rtol,
+            atol=self.atol,
+            method=self.solver,
+            options={
+                "min_step": 1e-5,
+                "max_num_steps": self.max_steps,
+                "dtype": torch.float32 if torch.backends.mps.is_available() else torch.float64
+            }
+        )[-1]
 
         if callback is not None:
             callback({
